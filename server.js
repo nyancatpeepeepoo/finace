@@ -1,61 +1,59 @@
 import express from "express";
-import fs from "fs";
-import bodyParser from "body-parser";
+import mongoose from "mongoose";
 import cors from "cors";
+import bodyParser from "body-parser";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const DATA_FILE = "./data.json";
+// ----- Connect to MongoDB -----
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("Connected to MongoDB"))
+    .catch(err => console.error("Mongo Error:", err));
 
-// Helper: read database
-function readData() {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-}
+// ----- Schema -----
+const entrySchema = new mongoose.Schema({
+    amount: Number,
+    date: { type: Date, default: Date.now }
+});
 
-// Helper: save database
-function saveData(data) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+const Entry = mongoose.model("Entry", entrySchema);
 
-// POST /add — add earnings or spending
-app.post("/add", (req, res) => {
+// ----- ROUTES -----
+
+// Add a transaction (positive = earned, negative = spent)
+app.post("/add", async (req, res) => {
     const { amount } = req.body;
+
     if (typeof amount !== "number") {
         return res.status(400).json({ error: "Amount must be a number" });
     }
 
-    const data = readData();
-    data.push({
-        amount,
-        date: new Date().toISOString()
-    });
-
-    saveData(data);
+    await Entry.create({ amount });
     res.json({ success: true });
 });
 
-// GET /history — returns cumulative balance since 2 Dec 2025
-app.get("/history", (req, res) => {
-    const data = readData();
+// Get history (from Dec 2, 2025 onward)
+app.get("/history", async (req, res) => {
+    const start = new Date("2025-12-02T00:00:00Z");
 
-    const startDate = new Date("2025-12-02T00:00:00Z");
+    const entries = await Entry.find({ date: { $gte: start } }).sort({ date: 1 });
+
     let balance = 0;
-
-    const timeline = data
-        .filter(entry => new Date(entry.date) >= startDate)
-        .sort((a, b) => new Date(a.date) - new Date(b.date))
-        .map(entry => {
-            balance += entry.amount;
-            return {
-                date: entry.date,
-                balance
-            };
-        });
+    const timeline = entries.map(e => {
+        balance += e.amount;
+        return {
+            date: e.date,
+            balance
+        };
+    });
 
     res.json(timeline);
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Server running on port " + PORT));
+app.listen(PORT, () => console.log("Server running on port", PORT));
